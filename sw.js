@@ -1,4 +1,4 @@
-const CACHE = 'recipe-note-v7';
+const CACHE = 'recipe-note-v8';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'import.js', 'manifest.json', 'icon-192.png', 'icon-180.png'];
 
 self.addEventListener('install', e => {

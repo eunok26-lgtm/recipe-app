@@ -399,7 +399,8 @@ function fetchStatusHTML(d) {
   if (f.state === 'fail') return `<div class="fetch-status warn"><span>${esc(f.msg)}</span>${again}</div>`;
   const done = f.filled.length ? `<b>${esc(f.filled.join(' · '))}</b> 자동으로 채웠어요.` : '새로 채울 칸이 없었어요.';
   let tip, warn = true;
-  if (f.limited) tip = '유튜브 설명란의 재료까지 가져오려면 ⚙︎ 설정에서 ‘링크 읽기 연결’을 해 주세요. 지금은 설명란을 복사해 ‘📋 한꺼번에 붙여넣기’에 넣어도 돼요.';
+  if (f.noInfo) tip = '이 영상은 게시자가 퍼가기를 막아 두어 제목을 자동으로 가져올 수 없어요. 요리 이름을 직접 적어 주세요. (⚙︎ ‘링크 읽기 연결’을 하면 가져올 수 있어요)';
+  else if (f.limited) tip = '유튜브 설명란의 재료까지 가져오려면 ⚙︎ 설정에서 ‘링크 읽기 연결’을 해 주세요. 지금은 설명란을 복사해 ‘📋 한꺼번에 붙여넣기’에 넣어도 돼요.';
   else if (!f.ingCount && !d._touched.ings) tip = '재료는 찾지 못했어요. 본문의 재료 부분을 복사해 ‘📋 한꺼번에 붙여넣기’에 넣어 주세요.';
   else { tip = '틀린 곳은 고쳐 주세요. 직접 고친 칸은 다시 가져와도 그대로 둬요.'; warn = false; }
   return `<div class="fetch-status ${warn ? 'warn' : 'ok'}"><span>${done} ${esc(tip)}</span>${again}</div>`;
@@ -436,7 +437,7 @@ async function onUrlChange(url, force) {
     d._auto[f] = true;
     filled.push(f === 'ings' ? `재료 ${v.length}개` : label[f]);
   });
-  d._fetch = { state: 'done', filled, limited: res.limited, ingCount: (res.ings || []).length };
+  d._fetch = { state: 'done', filled, limited: res.limited, noInfo: res.noInfo, ingCount: (res.ings || []).length };
   if (isEditing(d)) rerender();
 }
 function isEditing(d) { return ui.draft === d && /^#\/(new|edit)/.test(location.hash); }

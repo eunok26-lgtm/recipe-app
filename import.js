@@ -33,7 +33,8 @@ async function fetchPage(url) {
   }
   if (ytId(url)) {
     const info = await fetchYouTubeInfo(url);
-    if (!info) return { error: '영상 정보를 가져오지 못했어요' };
+    // 게시자가 퍼가기를 막은 영상은 제목도 알려주지 않는다 → 오류 대신 안내만
+    if (!info) return { kind: 'youtube', title: '', author: '', text: '', limited: !c.url, noInfo: true };
     return { kind: 'youtube', title: info.title, author: info.author, text: '', limited: !c.url };
   }
   try {
@@ -393,5 +394,6 @@ async function readRecipeFromUrl(url) {
   if (!page || page.error) return { error: page ? page.error : '읽지 못했어요' };
   const r = extractRecipe(page, page.finalUrl || url);
   r.limited = page.limited;
+  r.noInfo = page.noInfo;
   return r;
 }
