@@ -238,3 +238,22 @@ details.card > summary { padding: 11px 14px; cursor: pointer; color: var(--sub);
 .steps li.sub::before { content: none; }
 .steps li.tip { counter-increment: none; background: var(--warn-soft); font-size: 14px; }
 .steps li.tip::before { content: none; }
+
+/* 냉장고 */
+.seg { display: flex; background: var(--line); border-radius: 12px; padding: 3px; gap: 3px; margin-top: 4px; }
+.seg button { flex: 1; border: 0; background: none; border-radius: 9px; padding: 8px 6px; font-weight: 600; color: var(--sub); white-space: nowrap; }
+.seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.seg button b { color: var(--accent); margin-left: 2px; }
+.seg.small { margin-top: 0; flex: none; }
+.seg.small button { flex: none; padding: 6px 10px; font-size: 14px; }
+.add-card { padding: 12px; margin-top: 12px; }
+.add-row .input.qty { flex: 0 0 96px; }
+.fridge-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+.fridge-item:first-child { border-top: 0; }
+.fridge-item .cat { font-size: 22px; width: 28px; text-align: center; flex: none; }
+.fridge-item .nm-wrap { flex: 1; min-width: 0; }
+.fridge-item .nm { font-weight: 600; }
+.fridge-item .qty-txt { font-weight: 400; color: var(--sub); font-size: 14px; }
+.fridge-item .uses { font-size: 12px; color: var(--ok); }
+.fridge-item .days { font-size: 12px; color: var(--sub); flex: none; }
+.fridge-item .days.old { color: var(--warn); font-weight: 700; }

@@ -8,7 +8,8 @@ function load() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY));
     if (d && Array.isArray(d.recipes)) {
-      d.fridge = d.fridge || [];
+      // 예전에는 이름만 저장했으므로 {이름, 양, 보관 장소, 넣은 날} 형식으로 바꾼다
+      d.fridge = (d.fridge || []).map(f => typeof f === 'string' ? { id: Math.random().toString(36).slice(2, 10), name: f, qty: '', place: '냉장', at: Date.now() } : f);
       d.shop = Object.assign({ ids: [], checked: {}, extra: [] }, d.shop);
       return d;
     }
@@ -110,7 +111,7 @@ function inFridge(name) {
   const n = norm(name);
   if (!n) return false;
   return db.fridge.some(x => {
-    const f = norm(x);
+    const f = norm(fridgeName(x));
     return n === f || (f.length >= 2 && n.includes(f)) || (n.length >= 2 && f.includes(n));
   });
 }
@@ -471,10 +472,45 @@ function saveRecipe() {
 }
 
 /* ---------- 냉장고 ---------- */
+const PLACES = ['냉장', '냉동', '실온'];
+const PLACE_ICON = { 냉장: '🧊', 냉동: '❄️', 실온: '🧺' };
+// 재료 이름으로 대충 종류를 짐작해 아이콘을 붙인다
+const CATS = [
+  ['🥩', /(돼지|소고기|쇠고기|닭|오리|삼겹|목살|앞다리|뒷다리|갈비|등심|안심|차돌|사태|양지|항정|다짐육|고기|베이컨|햄|스팸|소시지)/],
+  ['🐟', /(오징어|새우|조개|바지락|홍합|굴$|고등어|연어|참치|멸치|낙지|쭈꾸미|주꾸미|전복|꽃게|게살|명태|동태|코다리|생선|갈치|삼치|문어|골뱅이|어묵|맛살|미역|다시마|김$)/],
+  ['🥚', /(계란|달걀|메추리알|우유|치즈|버터|요거트|요구르트|생크림|두부)/],
+  ['🍄', /(버섯|표고|팽이|새송이|느타리|양송이|목이)/],
+  ['🍎', /(사과|배$|귤|오렌지|레몬|바나나|딸기|포도|키위|토마토|블루베리|수박|참외|복숭아|감$)/],
+  ['🍚', /(쌀|밥|당면|국수|소면|라면|파스타|스파게티|우동|떡|빵|밀가루|부침가루|튀김가루|만두)/],
+  ['🧂', /(간장|된장|고추장|쌈장|소금|설탕|식초|기름|참기름|들기름|고춧가루|후추|액젓|굴소스|케첩|마요|물엿|올리고당|맛술|미림|다시다|소스|깨)/],
+  ['🥬', /./],
+];
+const catOf = name => CATS.find(([, re]) => re.test(norm(name)))[0];
+const daysSince = t => Math.floor((Date.now() - (t || Date.now())) / 86400000);
+const fridgeName = x => (typeof x === 'string' ? x : x.name);
+function recipesUsing(name) {
+  const n = norm(name);
+  return db.recipes.filter(r => r.ings.some(i => {
+    const k = norm(i.name);
+    return !i.seas && k && (k === n || (n.length >= 2 && k.includes(n)) || (k.length >= 2 && n.includes(k)));
+  })).length;
+}
+
 function viewFridge() {
+  const tab = ui.fridgeTab || 'mine';
   setHeader('냉장고', {
-    actions: db.fridge.length ? `<button class="btn small" data-act="clearFridge">비우기</button>` : '',
+    actions: db.fridge.length && tab === 'mine' ? `<button class="btn small" data-act="clearFridge">비우기</button>` : '',
   });
+  const readyCount = db.fridge.length ? db.recipes.filter(r => { const a = analyze(r); return a.main.length && !a.miss.length; }).length : 0;
+  const seg = `<div class="seg">
+    <button class="${tab === 'mine' ? 'on' : ''}" data-act="fridgeTab" data-v="mine">🧊 내 냉장고 <b>${db.fridge.length}</b></button>
+    <button class="${tab === 'rec' ? 'on' : ''}" data-act="fridgeTab" data-v="rec">🍳 추천 메뉴${readyCount ? ` <b>${readyCount}</b>` : ''}</button>
+  </div>`;
+  return seg + (tab === 'rec' ? viewFridgeRec() : viewFridgeMine());
+}
+
+function viewFridgeMine() {
+  const place = ui.fridgePlace || '냉장';
   // 레시피에 자주 나오는 주재료를 빠른 추가 후보로
   const freq = new Map();
   db.recipes.forEach(r => r.ings.forEach(i => {
@@ -482,20 +518,71 @@ function viewFridge() {
     const k = i.name.replace(/\(.*?\)/g, '').trim();
     freq.set(k, (freq.get(k) || 0) + 1);
   }));
-  const sug = [...freq.entries()].filter(([n]) => !inFridge(n)).sort((a, b) => b[1] - a[1]).slice(0, 24).map(e => e[0]);
+  const sug = [...freq.entries()].filter(([n]) => !inFridge(n)).sort((a, b) => b[1] - a[1]).slice(0, 20).map(e => e[0]);
 
-  let html = `
-    <div class="add-row" style="margin-top:4px">
-      <input class="input" id="fridgeInput" placeholder="있는 재료 (쉼표로 여러 개)" enterkeyhint="done">
-      <button class="btn primary" data-act="addFridge">넣기</button>
-    </div>
-    ${db.fridge.length ? `<div class="chips" style="margin-top:12px">${db.fridge.map((f, i) =>
-      `<span class="chip have">${esc(f)}<button class="x" data-act="delFridge" data-i="${i}" aria-label="빼기">✕</button></span>`).join('')}</div>`
-      : `<p class="muted small">지금 냉장고에 있는 재료를 넣으면 만들 수 있는 요리를 찾아 드려요.</p>`}
-    ${sug.length ? `<div class="section-title">빠르게 넣기 <span class="count">내 레시피에 자주 나오는 재료</span></div>
-      <div class="chips">${sug.map(n => `<button class="chip" data-act="quickFridge" data-v="${esc(n)}">＋ ${esc(n)}</button>`).join('')}</div>` : ''}`;
+  let html = `<div class="card add-card">
+      <div class="add-row">
+        <input class="input" id="fridgeInput" placeholder="재료 (예: 양파, 두부)" enterkeyhint="done">
+        <input class="input qty" id="fridgeQty" placeholder="양 (선택)" enterkeyhint="done">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div class="seg small">${PLACES.map(p => `<button class="${p === place ? 'on' : ''}" data-act="fridgePlace" data-v="${p}">${PLACE_ICON[p]} ${p}</button>`).join('')}</div>
+        <span class="spacer"></span>
+        <button class="btn primary" data-act="addFridge">넣기</button>
+      </div>
+      ${sug.length ? `<div class="small muted" style="margin:12px 0 6px">내 레시피에 자주 나오는 재료 — 누르면 바로 ${esc(place)}에 넣어요</div>
+        <div class="chips">${sug.map(n => `<button class="chip" data-act="quickFridge" data-v="${esc(n)}">＋ ${esc(n)}</button>`).join('')}</div>` : ''}
+    </div>`;
 
-  if (!db.fridge.length) return html;
+  if (!db.fridge.length) {
+    return html + `<div class="empty"><div class="big">🧊</div><p>냉장고가 비어 있어요.<br>지금 있는 재료를 넣어 두면<br>‘추천 메뉴’에서 만들 수 있는 요리를 찾아 드려요.</p></div>`;
+  }
+  for (const p of PLACES) {
+    // 오래된 것부터 (먼저 써야 할 재료가 위로)
+    const items = db.fridge.filter(x => (x.place || '냉장') === p).sort((a, b) => (a.at || 0) - (b.at || 0));
+    if (!items.length) continue;
+    html += `<div class="section-title">${PLACE_ICON[p]} ${p} <span class="count">${items.length}</span></div>
+      <div class="card fridge-list">${items.map(fridgeRow).join('')}</div>`;
+  }
+  html += `<p class="muted small" style="margin-top:14px">재료를 누르면 양·보관 장소·넣은 날을 고치거나 뺄 수 있어요. 냉장 재료는 일주일이 지나면 날짜가 노랗게 보여요.</p>`;
+  return html;
+}
+function fridgeRow(x) {
+  const d = daysSince(x.at);
+  const old = (x.place || '냉장') === '냉장' && d >= 7;
+  const uses = recipesUsing(x.name);
+  return `<div class="fridge-item" data-act="editFridge" data-id="${x.id}">
+    <span class="cat">${catOf(x.name)}</span>
+    <div class="nm-wrap"><div class="nm">${esc(x.name)}${x.qty ? ` <span class="qty-txt">${esc(x.qty)}</span>` : ''}</div>
+      ${uses ? `<div class="uses">레시피 ${uses}개에 쓰여요</div>` : ''}</div>
+    <span class="days ${old ? 'old' : ''}">${d === 0 ? '오늘' : d + '일째'}</span>
+    <button class="del" data-act="delFridge" data-id="${x.id}" aria-label="빼기">✕</button>
+  </div>`;
+}
+function openFridgeEdit(id) {
+  const x = db.fridge.find(f => f.id === id);
+  if (!x) return;
+  const date = new Date(x.at || Date.now());
+  const ymd = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  openSheet(`<h2>${catOf(x.name)} ${esc(x.name)}</h2>
+    <div class="field" style="margin-top:0"><label>이름</label><input class="input" id="feName" value="${esc(x.name)}"></div>
+    <div class="field"><label>양 <span class="hint">예: 2개, 반 통, 300g</span></label><input class="input" id="feQty" value="${esc(x.qty || '')}"></div>
+    <div class="field"><label>보관 장소</label>
+      <div class="seg small" id="fePlace">${PLACES.map(p => `<button class="${p === (x.place || '냉장') ? 'on' : ''}" data-act="fePlace" data-v="${p}">${PLACE_ICON[p]} ${p}</button>`).join('')}</div></div>
+    <div class="field"><label>넣은 날</label><input class="input" type="date" id="feDate" value="${ymd}"></div>
+    <div class="row" style="margin-top:18px">
+      <button class="btn danger" data-act="delFridge" data-id="${x.id}" data-close>빼기</button>
+      <span class="spacer"></span>
+      <button class="btn" data-close>취소</button>
+      <button class="btn primary" data-act="saveFridge" data-id="${x.id}">저장</button>
+    </div>`);
+}
+
+function viewFridgeRec() {
+  if (!db.fridge.length) {
+    return `<div class="empty"><div class="big">🍳</div><p>먼저 ‘내 냉장고’에 지금 있는 재료를 넣어 주세요.</p>
+      <button class="btn primary" data-act="fridgeTab" data-v="mine">재료 넣으러 가기</button></div>`;
+  }
   const scored = db.recipes.map(r => ({ r, ...analyze(r) })).filter(x => x.main.length && x.have.length);
   const ready = scored.filter(x => !x.miss.length).sort((a, b) => b.have.length - a.have.length);
   const almost = scored.filter(x => x.miss.length && x.miss.length <= 2).sort((a, b) => a.miss.length - b.miss.length || b.have.length - a.have.length);
@@ -510,20 +597,25 @@ function viewFridge() {
       ${x.miss.length && !db.shop.ids.includes(x.r.id) ? `<button class="btn small" style="margin-top:8px" data-act="toggleShop" data-id="${x.r.id}">🛒 장보기에 담기</button>` : ''}
     </div></div>`;
 
-  html += `<div class="section-title">🍳 지금 바로 만들 수 있어요 <span class="count">${ready.length}</span></div>
+  let html = `<div class="section-title">🍳 지금 바로 만들 수 있어요 <span class="count">${ready.length}</span></div>
     ${ready.length ? `<div class="list" style="margin-top:0">${ready.map(card).join('')}</div>` : `<div class="muted small">있는 재료만으로 되는 요리는 아직 없어요.</div>`}`;
   if (almost.length) html += `<div class="section-title">🛒 조금만 사면 돼요 <span class="count">${almost.length}</span></div>
     <div class="muted small" style="margin:-4px 0 8px"><span class="chip miss" style="font-size:12px;padding:0 6px">노란색</span> 재료가 부족해요</div>
     <div class="list" style="margin-top:0">${almost.map(card).join('')}</div>`;
   if (more.length) html += `<details class="card" style="margin-top:18px"><summary>재료가 더 필요한 요리 ${more.length}개</summary>
     <div class="list" style="margin:0;padding:0 10px 10px">${more.map(card).join('')}</div></details>`;
+  if (!scored.length) html = `<div class="empty"><p>냉장고 재료가 들어간 레시피가 아직 없어요.</p></div>`;
   html += `<p class="muted small" style="margin-top:18px">양념(간장·소금·설탕 등)은 집에 있다고 보고 계산해요.</p>`;
   return html;
 }
-function addFridge(text) {
+function addFridge(text, qty = '', place = '냉장') {
   const names = String(text).split(/[,，\n]+/).map(s => s.trim()).filter(Boolean);
   let n = 0;
-  names.forEach(name => { if (!db.fridge.some(f => norm(f) === norm(name))) { db.fridge.push(name); n++; } });
+  names.forEach(name => {
+    if (db.fridge.some(f => norm(f.name) === norm(name))) return;
+    db.fridge.push({ id: uid(), name, qty: names.length === 1 ? qty : '', place, at: Date.now() });
+    n++;
+  });
   if (n) save();
   return n;
 }
@@ -645,7 +737,10 @@ $('#importFile').addEventListener('change', async e => {
       if (!old) { db.recipes.push(r); added++; }
       else if ((r.updatedAt || 0) > (old.updatedAt || 0)) { Object.assign(old, r); updated++; }
     });
-    (data.fridge || []).forEach(f => { if (!db.fridge.some(x => norm(x) === norm(f))) db.fridge.push(f); });
+    (data.fridge || []).forEach(f => {
+      const item = typeof f === 'string' ? { id: uid(), name: f, qty: '', place: '냉장', at: Date.now() } : f;
+      if (!db.fridge.some(x => norm(x.name) === norm(item.name))) db.fridge.push(item);
+    });
     save(); render();
     toast(`새 레시피 ${added}개, 갱신 ${updated}개를 가져왔어요`);
   } catch (err) { toast('레시피 노트 백업 파일이 아니에요'); }
@@ -731,11 +826,29 @@ document.addEventListener('click', async e => {
     // 냉장고
     case 'addFridge': {
       const inp = $('#fridgeInput');
-      if (addFridge(inp.value)) { inp.value = ''; rerender(); $('#fridgeInput').focus(); }
+      if (!inp.value.trim()) { inp.focus(); return; }
+      const n = addFridge(inp.value, $('#fridgeQty').value.trim(), ui.fridgePlace || '냉장');
+      if (n) { rerender(); $('#fridgeInput').focus(); toast(`${ui.fridgePlace || '냉장'}에 ${n}개 넣었어요`); }
+      else toast('이미 냉장고에 있어요');
       break;
     }
-    case 'quickFridge': addFridge(v); rerender(); break;
-    case 'delFridge': db.fridge.splice(+el.dataset.i, 1); save(); rerender(); break;
+    case 'quickFridge': addFridge(v, '', ui.fridgePlace || '냉장'); rerender(); break;
+    case 'fridgeTab': ui.fridgeTab = v; render(); break;
+    case 'fridgePlace': ui.fridgePlace = v; rerender(); break;
+    case 'editFridge': openFridgeEdit(el.dataset.id); break;
+    case 'fePlace': el.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === el)); break;
+    case 'saveFridge': {
+      const x = db.fridge.find(f => f.id === id);
+      const name = $('#feName').value.trim();
+      if (x && name) {
+        x.name = name; x.qty = $('#feQty').value.trim();
+        x.place = ($('#fePlace .on') || {}).dataset?.v || x.place;
+        const dv = $('#feDate').value; if (dv) x.at = new Date(dv + 'T12:00').getTime();
+        save();
+      }
+      document.querySelector('.sheet-back')?.remove(); rerender(); break;
+    }
+    case 'delFridge': { e.stopPropagation(); const x = db.fridge.find(f => f.id === id); db.fridge = db.fridge.filter(f => f.id !== id); save(); rerender(); if (x) toast(`${x.name}을(를) 뺐어요`); break; }
     case 'clearFridge': if (confirm('냉장고 재료를 모두 비울까요?')) { db.fridge = []; save(); rerender(); } break;
     // 장보기
     case 'checkShop': {
@@ -803,7 +916,7 @@ document.addEventListener('paste', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || e.isComposing) return;
-  if (e.target.id === 'fridgeInput') { e.preventDefault(); $('[data-act="addFridge"]').click(); }
+  if (e.target.id === 'fridgeInput' || e.target.id === 'fridgeQty') { e.preventDefault(); $('[data-act="addFridge"]').click(); }
   if (e.target.id === 'extraInput') { e.preventDefault(); $('[data-act="addExtra"]').click(); }
   if (e.target.dataset.ing === 'amt') { e.preventDefault(); $('[data-act="addIng"]').click(); }
 });
