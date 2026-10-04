@@ -11,15 +11,18 @@ function load() {
       // 예전에는 이름만 저장했으므로 {이름, 양, 보관 장소, 넣은 날} 형식으로 바꾼다
       d.fridge = (d.fridge || []).map(f => typeof f === 'string' ? { id: Math.random().toString(36).slice(2, 10), name: f, qty: '', place: '냉장', at: Date.now() } : f);
       d.shop = Object.assign({ ids: [], checked: {}, extra: [] }, d.shop);
+      d.deleted = d.deleted || {}; // 동기화용: 지운 항목 {id: 지운 시각}
       return d;
     }
   } catch (e) {}
-  return { v: 1, recipes: [], fridge: [], shop: { ids: [], checked: {}, extra: [] } };
+  return { v: 1, recipes: [], fridge: [], shop: { ids: [], checked: {}, extra: [] }, deleted: {} };
 }
 function save() {
+  const changed = typeof stampChanges === 'function' ? stampChanges() : false; // sync.js
   try { localStorage.setItem(KEY, JSON.stringify(db)); }
   catch (e) { toast('저장하지 못했어요. 저장 공간을 확인해 주세요.'); }
   updateBadge();
+  if (changed) scheduleSync();
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
@@ -726,17 +729,21 @@ function openSheet(html) {
 }
 function openSettings() {
   const c = relayConf();
-  openSheet(`<h2>링크 읽기 연결</h2>
-    <p class="muted small" style="margin-top:0">유튜브 영상 설명란의 재료까지 자동으로 가져오려면 내 구글 앱스 스크립트 연결이 필요해요.
-      연결이 없어도 블로그·레시피 사이트는 읽을 수 있어요. (이 설정은 이 기기에만 저장돼요)</p>
+  openSheet(`<h2>구글 연결</h2>
+    <p class="muted small" style="margin-top:0">내 구글 앱스 스크립트를 연결하면 <b>PC·폰 어디서나 같은 레시피</b>를 볼 수 있고(내 구글 드라이브에 저장),
+      유튜브 영상 설명란의 재료도 자동으로 가져와요. 기기마다 한 번씩 넣어 주세요.</p>
     <input class="input" id="relayUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(c.url || '')}">
     <input class="input" id="relayKey" placeholder="연결 비밀번호 (SECRET)" value="${esc(c.key || '')}" style="margin-top:6px">
     <div class="row" style="margin-top:8px">
       <button class="btn primary" data-act="saveRelay">저장</button>
       <span class="small muted" id="relayMsg">${c.url ? '연결되어 있어요' : ''}</span>
     </div>
+    <div class="row" style="margin-top:10px">
+      <span class="small muted" id="syncMsg" style="flex:1">${esc(syncText())}</span>
+      ${c.url ? '<button class="btn small" data-act="syncNow">지금 동기화</button>' : ''}
+    </div>
     <h2 style="margin-top:24px">백업</h2>
-    <p class="muted small" style="margin-top:0">레시피는 이 기기(브라우저) 안에만 저장돼요. 기기를 바꾸거나 다른 기기로 옮길 때 파일로 내보냈다가 가져오세요.</p>
+    <p class="muted small" style="margin-top:0">혹시 모를 때를 대비해 가끔 파일로 내보내 두세요. 구글 연결 없이 다른 기기로 옮길 때도 써요.</p>
     <button class="btn block" data-act="export" data-close>📤 파일로 내보내기</button>
     <button class="btn block" data-act="import" data-close>📥 파일에서 가져오기</button>
     <p class="muted small">레시피 ${db.recipes.length}개 · 냉장고 재료 ${db.fridge.length}개</p>
@@ -836,6 +843,7 @@ document.addEventListener('click', async e => {
     }
     case 'addTag': d.tags.push(v); d._touched.tags = true; rerender(); break;
     case 'refetch': onUrlChange(d.url, true); break;
+    case 'syncNow': syncNow(true); break;
     case 'saveRelay': {
       const url = $('#relayUrl').value.trim(), key = $('#relayKey').value.trim();
       const msg = $('#relayMsg');
@@ -845,7 +853,9 @@ document.addEventListener('click', async e => {
         const j = await (await fetch(`${url}?key=${encodeURIComponent(key)}`)).json();
         if (!j.ok) { msg.textContent = j.error === 'key' ? '비밀번호가 맞지 않아요' : '연결에 실패했어요'; return; }
         setRelayConf({ url, key });
-        msg.textContent = '✓ 연결됐어요';
+        if (!j.sync) { msg.textContent = '✓ 연결됐어요. 동기화를 쓰려면 스크립트를 새 버전으로 다시 배포해 주세요'; break; }
+        msg.textContent = '✓ 연결됐어요. 맞추는 중…';
+        if (await syncNow(true)) msg.textContent = '✓ 연결됐어요. 이제 기기끼리 자동으로 맞춰져요';
       } catch (err) { msg.textContent = '주소를 확인해 주세요 (웹앱 주소, 액세스: 모든 사용자)'; }
       break;
     }

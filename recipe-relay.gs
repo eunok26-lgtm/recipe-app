@@ -1,25 +1,79 @@
 /**
- * 레시피 노트 — 링크 읽기 중계 (Google Apps Script 웹앱)
+ * 레시피 노트 — 구글 연결 (Google Apps Script 웹앱)
  *
- * 브라우저는 다른 사이트 페이지를 직접 못 읽어서(CORS) 이 스크립트가 대신 읽어 준다.
- * 레시피를 골라내는 일은 앱(import.js)이 하고, 여기서는 페이지에서 제목·작성자·본문만 뽑아 돌려준다.
+ * 1) 링크 읽기: 브라우저는 다른 사이트 페이지를 직접 못 읽어서(CORS) 이 스크립트가 대신 읽어 준다.
+ *    레시피를 골라내는 일은 앱(import.js)이 하고, 여기서는 페이지에서 제목·작성자·본문만 뽑아 돌려준다.
+ * 2) 동기화: 레시피·냉장고·장보기를 내 구글 드라이브의 recipe-note-data.json 파일 하나에 저장하고,
+ *    기기마다 보내온 내용과 합쳐서(항목별로 더 최근에 고친 쪽) 돌려준다.
  *
  * 배포: script.google.com → 새 프로젝트 → 이 코드 붙여넣기 → SECRET 바꾸기
  *       → 배포 → 새 배포 → 유형: 웹 앱, 실행: 나, 액세스 권한: 모든 사용자
  *       → 나온 웹앱 주소와 SECRET 을 앱의 ⚙︎ 설정에 넣는다.
+ * 코드를 고친 뒤에는 배포 → 배포 관리 → 수정(연필) → 버전: 새 버전 으로 다시 배포해야 반영된다.
  */
 const SECRET = 'CHANGE_ME';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
+const DATA_FILE = 'recipe-note-data.json';
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.key !== SECRET) return out({ ok: false, error: 'key' });
-  if (!p.url) return out({ ok: true, pong: true });
+  if (!p.url) return out({ ok: true, pong: true, sync: true });
   try {
     return out(Object.assign({ ok: true }, grab(p.url)));
   } catch (err) {
     return out({ ok: false, error: String(err && err.message || err) });
   }
+}
+
+// 동기화는 내용이 커서 POST 로 받는다 (앱은 text/plain 으로 보내 CORS 사전 요청을 피한다)
+function doPost(e) {
+  let body;
+  try { body = JSON.parse(e.postData.contents); } catch (err) { return out({ ok: false, error: 'json' }); }
+  if (body.key !== SECRET) return out({ ok: false, error: 'key' });
+  if (body.action !== 'sync') return out({ ok: false, error: 'action' });
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000); // 폰과 PC가 동시에 보내도 하나씩 처리
+  try {
+    const files = DriveApp.getFilesByName(DATA_FILE);
+    const file = files.hasNext() ? files.next() : null;
+    const saved = file ? JSON.parse(file.getBlob().getDataAsString('UTF-8') || '{}') : {};
+    const merged = mergeData(saved, body.data || {});
+    const text = JSON.stringify(merged);
+    if (file) file.setContent(text); else DriveApp.createFile(DATA_FILE, text, MimeType.PLAIN_TEXT);
+    return out({ ok: true, data: merged });
+  } catch (err) {
+    return out({ ok: false, error: String(err && err.message || err) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 두 기기의 데이터를 합친다: 레시피·냉장고 재료는 id 별로 updatedAt 이 더 최근인 쪽,
+// 지운 항목은 deleted 에 {id: 지운 시각} 으로 남겨 다른 기기에서도 지워지게 한다. 장보기는 통째로 최근 쪽.
+function mergeData(a, b) {
+  const deleted = Object.assign({}, a.deleted || {});
+  Object.keys(b.deleted || {}).forEach(id => { if (!(deleted[id] >= b.deleted[id])) deleted[id] = b.deleted[id]; });
+  const now = Date.now();
+  Object.keys(deleted).forEach(id => { if (now - deleted[id] > 180 * 86400000) delete deleted[id]; }); // 반년 지난 기록은 정리
+  const mergeList = (x, y) => {
+    const byId = {};
+    (x || []).concat(y || []).forEach(it => {
+      if (!it || !it.id) return;
+      const old = byId[it.id];
+      if (!old || (it.updatedAt || 0) > (old.updatedAt || 0)) byId[it.id] = it;
+    });
+    return Object.keys(byId).map(id => byId[id]).filter(it => !(deleted[it.id] >= (it.updatedAt || 0)));
+  };
+  const sa = a.shop, sb = b.shop;
+  const shop = !sa ? sb : !sb ? sa : ((sb.updatedAt || 0) >= (sa.updatedAt || 0) ? sb : sa);
+  return {
+    v: 1,
+    recipes: mergeList(a.recipes, b.recipes),
+    fridge: mergeList(a.fridge, b.fridge),
+    shop: shop || { ids: [], checked: {}, extra: [] },
+    deleted: deleted,
+  };
 }
 
 function out(o) {
