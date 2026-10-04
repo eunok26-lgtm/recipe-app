@@ -175,11 +175,23 @@ function grab(url) {
 }
 
 function youtube(id) {
-  const page = get('https://www.youtube.com/watch?v=' + id + '&hl=ko');
-  const m = page.html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]+?\});\s*(?:var\s|<\/script>)/);
-  if (!m) throw new Error('youtube parse');
-  const v = JSON.parse(m[1]).videoDetails || {};
-  return { kind: 'youtube', finalUrl: 'https://www.youtube.com/watch?v=' + id, title: v.title || '', author: v.author || '', text: v.shortDescription || '', jsonld: [] };
+  const html = get('https://www.youtube.com/watch?v=' + id + '&hl=ko').html;
+  const unjson = s => { try { return JSON.parse('"' + s + '"'); } catch (e) { return s; } };
+  let title = '', author = '', desc = '';
+  const m = html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]+?\});\s*(?:var\s|<\/script>)/);
+  if (m) {
+    try { const v = JSON.parse(m[1]).videoDetails || {}; title = v.title || ''; author = v.author || ''; desc = v.shortDescription || ''; } catch (e) {}
+  }
+  // 구글 서버에서 열면 유튜브가 로그인 확인(LOGIN_REQUIRED)을 요구해 videoDetails 가 빠진다
+  // → 화면 그리기용 데이터(ytInitialData)에 남아 있는 설명란·제목·채널 이름을 꺼낸다
+  if (!desc) { const d = html.match(/"attributedDescription":\{"content":"((?:[^"\\]|\\.)*)"/); if (d) desc = unjson(d[1]); }
+  if (!title) { const t = html.match(/<meta name="title" content="([^"]*)"/); if (t) title = decode(t[1]); }
+  if (!author) {
+    const a = html.match(/"ownerChannelName":"((?:[^"\\]|\\.)*)"/) || html.match(/"videoOwnerRenderer":\{"thumbnail"[\s\S]{0,3000}?"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/);
+    if (a) author = unjson(a[1]);
+  }
+  if (!title && !desc) throw new Error('youtube parse');
+  return { kind: 'youtube', finalUrl: 'https://www.youtube.com/watch?v=' + id, title: title, author: author, text: desc, jsonld: [] };
 }
 
 function toText(html) {
