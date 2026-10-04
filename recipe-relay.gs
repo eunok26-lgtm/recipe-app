@@ -7,6 +7,7 @@
  *    기기마다 보내온 내용과 합쳐서(항목별로 더 최근에 고친 쪽) 돌려준다.
  *
  * 배포: script.google.com → 새 프로젝트 → 이 코드 붙여넣기(고칠 곳 없음)
+ *       → 왼쪽 ‘서비스 +’ 에서 YouTube Data API v3 추가 (유튜브 설명란 읽기용)
  *       → 배포 → 새 배포 → 유형: 웹 앱, 실행: 나, 액세스 권한: 모든 사용자
  *       → 나온 웹앱 주소를 앱의 ⚙︎ 구글 연결에 넣는다.
  * 비밀번호: 처음 연결한 기기의 앱이 무작위 비밀번호를 만들어 이 스크립트(프로젝트 설정 → 스크립트 속성 SECRET)에 저장한다.
@@ -175,6 +176,15 @@ function grab(url) {
 }
 
 function youtube(id) {
+  // 1순위: 유튜브 공식 API (편집기 왼쪽 ‘서비스 +’ 에서 YouTube Data API 를 추가해 두어야 한다).
+  // 구글 서버에서 유튜브 페이지를 직접 열면 로봇 확인(429)에 자주 걸리기 때문.
+  try {
+    if (typeof YouTube !== 'undefined') {
+      const it = (YouTube.Videos.list('snippet', { id: id, hl: 'ko' }).items || [])[0];
+      if (it) return { kind: 'youtube', finalUrl: 'https://www.youtube.com/watch?v=' + id, title: it.snippet.title || '', author: it.snippet.channelTitle || '', text: it.snippet.description || '', jsonld: [] };
+    }
+  } catch (e) {}
+  // 2순위: 영상 페이지에서 직접 꺼내기
   const html = get('https://www.youtube.com/watch?v=' + id + '&hl=ko').html;
   const unjson = s => { try { return JSON.parse('"' + s + '"'); } catch (e) { return s; } };
   let title = '', author = '', desc = '';
