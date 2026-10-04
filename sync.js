@@ -102,6 +102,67 @@ function applyRemote(d) {
   if (!busy && before !== JSON.stringify([db.recipes, db.fridge, db.shop])) rerender();
 }
 
+/* ---------- 연결 ---------- */
+// 다른 기기용 연결 링크: 주소와 비밀번호를 # 뒤에 담는다 (# 뒤는 서버로 전송되지 않음)
+const b64 = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64 = s => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))));
+function connectLink() {
+  const c = relayConf();
+  return `${location.origin}${location.pathname}#connect=${b64(JSON.stringify({ u: c.url, k: c.key }))}`;
+}
+function parseConnect(text) {
+  const m = String(text || '').match(/#connect=([\w-]+)/);
+  if (!m) return null;
+  try { const o = JSON.parse(unb64(m[1])); return o.u && o.k ? { url: o.u, key: o.k } : null; } catch (e) { return null; }
+}
+// 웹앱 주소면 처음 연결(비밀번호를 만들어 스크립트에 저장), 연결 링크면 그 비밀번호로 연결
+async function connectRelay(input) {
+  input = String(input || '').trim();
+  const link = parseConnect(input);
+  try {
+    let conf;
+    if (link) {
+      const j = await (await fetch(`${link.url}?key=${encodeURIComponent(link.key)}`)).json();
+      if (!j.ok) return { ok: false, msg: j.error === 'key' ? '연결 링크가 맞지 않아요. 연결된 기기에서 링크를 다시 복사해 주세요' : '연결하지 못했어요' };
+      conf = link;
+    } else {
+      const url = (input.match(/https:\/\/script\.google(?:usercontent)?\.com\/\S+/) || [])[0];
+      if (!url) return { ok: false, msg: '스크립트 웹앱 주소(https://script.google.com/…/exec)나 연결 링크를 붙여넣어 주세요' };
+      const key = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+      const j = await (await fetch(`${url}?setup=${key}`)).json();
+      if (!j.ok) return { ok: false, msg: j.error === 'already' ? '이미 다른 기기에서 연결한 스크립트예요. 그 기기의 ⚙︎에서 ‘연결 링크 복사’로 받은 링크를 붙여넣어 주세요' : '연결하지 못했어요 (스크립트를 최신 코드로 배포했는지 확인해 주세요)' };
+      conf = { url, key };
+    }
+    setRelayConf(conf);
+    setSyncInfo({});
+    const ok = await syncNow();
+    return { ok: true, msg: ok ? '✓ 연결됐어요. 이제 기기끼리 자동으로 맞춰져요' : '✓ 연결됐어요. (동기화는 잠시 후 다시 시도해요)' };
+  } catch (e) {
+    return { ok: false, msg: '주소에 접속하지 못했어요. 배포할 때 액세스 권한을 ‘모든 사용자’로 했는지 확인해 주세요' };
+  }
+}
+// QR 코드는 필요할 때만 cdnjs 에서 라이브러리를 불러 그린다
+function drawConnectQR(box) {
+  if (!box) return;
+  const draw = () => { box.innerHTML = ''; new QRCode(box, { text: connectLink(), width: 180, height: 180, correctLevel: QRCode.CorrectLevel.L }); };
+  if (window.QRCode) return draw();
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+  s.onload = draw;
+  s.onerror = () => { box.innerHTML = '<span class="small muted">QR을 불러오지 못했어요. 아래 링크를 써 주세요.</span>'; };
+  document.head.appendChild(s);
+}
+// 폰에서 연결 링크를 열면 바로 연결
+(async function handleConnectLink() {
+  if (!/#connect=/.test(location.hash)) return;
+  const raw = location.hash;
+  history.replaceState(null, '', location.pathname + '#/recipes');
+  render();
+  toast('구글 연결 중…');
+  const r = await connectRelay(raw);
+  toast(r.msg);
+})();
+
 takeSnap();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
 window.addEventListener('online', () => syncNow());

@@ -729,25 +729,36 @@ function openSheet(html) {
 }
 function openSettings() {
   const c = relayConf();
+  const connected = !!(c.url && c.key);
   openSheet(`<h2>구글 연결</h2>
     <p class="muted small" style="margin-top:0">내 구글 앱스 스크립트를 연결하면 <b>PC·폰 어디서나 같은 레시피</b>를 볼 수 있고(내 구글 드라이브에 저장),
-      유튜브 영상 설명란의 재료도 자동으로 가져와요. 기기마다 한 번씩 넣어 주세요.</p>
-    <input class="input" id="relayUrl" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(c.url || '')}">
-    <input class="input" id="relayKey" placeholder="연결 비밀번호 (SECRET)" value="${esc(c.key || '')}" style="margin-top:6px">
-    <div class="row" style="margin-top:8px">
-      <button class="btn primary" data-act="saveRelay">저장</button>
-      <span class="small muted" id="relayMsg">${c.url ? '연결되어 있어요' : ''}</span>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <span class="small muted" id="syncMsg" style="flex:1">${esc(syncText())}</span>
-      ${c.url ? '<button class="btn small" data-act="syncNow">지금 동기화</button>' : ''}
-    </div>
+      유튜브 영상 설명란의 재료도 자동으로 가져와요.</p>
+    ${connected ? `
+      <div class="card" style="padding:12px">
+        <div class="row"><b>✓ 연결되어 있어요</b><span class="spacer"></span><button class="btn small" data-act="syncNow">지금 동기화</button></div>
+        <div class="small muted" id="syncMsg" style="margin-top:6px">${esc(syncText())}</div>
+      </div>
+      <h2 style="margin-top:22px">다른 기기 연결하기</h2>
+      <p class="muted small" style="margin-top:0">폰 카메라로 QR을 찍거나, 아래 링크를 카톡 등으로 보내 폰에서 열면 바로 연결돼요.<br>
+        <b>아이폰</b>은 홈 화면에 추가한 앱이 따로 저장되니, 홈 화면 앱의 ⚙︎ 칸에 링크를 붙여넣어 주세요.</p>
+      <div id="qrBox" class="qr-box"></div>
+      <button class="btn block" data-act="copyConnect">🔗 연결 링크 복사</button>
+      <button class="btn block ghost small danger" data-act="disconnect" style="margin-top:6px">이 기기 연결 끊기</button>`
+    : `
+      <input class="input" id="relayUrl" placeholder="스크립트 웹앱 주소 또는 연결 링크" value="">
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" data-act="saveRelay">연결</button>
+        <span class="small muted" id="relayMsg" style="flex:1"></span>
+      </div>
+      <p class="muted small">처음이면 스크립트를 배포하고 나온 <b>웹앱 주소</b>를, 다른 기기에서 이미 연결했다면 그 기기의 ⚙︎에 있는 <b>연결 링크</b>를 붙여넣으세요.</p>
+      <div class="small muted" id="syncMsg"></div>`}
     <h2 style="margin-top:24px">백업</h2>
     <p class="muted small" style="margin-top:0">혹시 모를 때를 대비해 가끔 파일로 내보내 두세요. 구글 연결 없이 다른 기기로 옮길 때도 써요.</p>
     <button class="btn block" data-act="export" data-close>📤 파일로 내보내기</button>
     <button class="btn block" data-act="import" data-close>📥 파일에서 가져오기</button>
     <p class="muted small">레시피 ${db.recipes.length}개 · 냉장고 재료 ${db.fridge.length}개</p>
     <button class="btn block ghost" data-close>닫기</button>`);
+  if (connected) drawConnectQR($('#qrBox'));
 }
 function exportData() {
   const blob = new Blob([JSON.stringify(db, null, 1)], { type: 'application/json' });
@@ -845,20 +856,20 @@ document.addEventListener('click', async e => {
     case 'refetch': onUrlChange(d.url, true); break;
     case 'syncNow': syncNow(true); break;
     case 'saveRelay': {
-      const url = $('#relayUrl').value.trim(), key = $('#relayKey').value.trim();
       const msg = $('#relayMsg');
-      if (!url) { setRelayConf({}); msg.textContent = '연결을 지웠어요'; return; }
-      msg.textContent = '확인하는 중…';
-      try {
-        const j = await (await fetch(`${url}?key=${encodeURIComponent(key)}`)).json();
-        if (!j.ok) { msg.textContent = j.error === 'key' ? '비밀번호가 맞지 않아요' : '연결에 실패했어요'; return; }
-        setRelayConf({ url, key });
-        if (!j.sync) { msg.textContent = '✓ 연결됐어요. 동기화를 쓰려면 스크립트를 새 버전으로 다시 배포해 주세요'; break; }
-        msg.textContent = '✓ 연결됐어요. 맞추는 중…';
-        if (await syncNow(true)) msg.textContent = '✓ 연결됐어요. 이제 기기끼리 자동으로 맞춰져요';
-      } catch (err) { msg.textContent = '주소를 확인해 주세요 (웹앱 주소, 액세스: 모든 사용자)'; }
+      msg.textContent = '연결하는 중…';
+      const r = await connectRelay($('#relayUrl').value);
+      msg.textContent = r.msg;
+      if (r.ok) setTimeout(() => { document.querySelector('.sheet-back')?.remove(); openSettings(); }, 900);
       break;
     }
+    case 'copyConnect': {
+      const link = connectLink();
+      try { await navigator.clipboard.writeText(link); toast('연결 링크를 복사했어요. 폰으로 보내서 열어 주세요'); }
+      catch (err) { openSheet(`<h2>연결 링크</h2><textarea class="textarea">${esc(link)}</textarea><button class="btn block" data-close>닫기</button>`); }
+      break;
+    }
+    case 'disconnect': if (confirm('이 기기의 구글 연결을 끊을까요? (레시피는 이 기기에 그대로 남아요)')) { setRelayConf({}); document.querySelector('.sheet-back')?.remove(); openSettings(); } break;
     case 'saveRecipe': saveRecipe(); break;
     // 냉장고
     case 'addFridge': {

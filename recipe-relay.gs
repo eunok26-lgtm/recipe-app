@@ -6,18 +6,32 @@
  * 2) 동기화: 레시피·냉장고·장보기를 내 구글 드라이브의 recipe-note-data.json 파일 하나에 저장하고,
  *    기기마다 보내온 내용과 합쳐서(항목별로 더 최근에 고친 쪽) 돌려준다.
  *
- * 배포: script.google.com → 새 프로젝트 → 이 코드 붙여넣기 → SECRET 바꾸기
+ * 배포: script.google.com → 새 프로젝트 → 이 코드 붙여넣기(고칠 곳 없음)
  *       → 배포 → 새 배포 → 유형: 웹 앱, 실행: 나, 액세스 권한: 모든 사용자
- *       → 나온 웹앱 주소와 SECRET 을 앱의 ⚙︎ 설정에 넣는다.
+ *       → 나온 웹앱 주소를 앱의 ⚙︎ 구글 연결에 넣는다.
+ * 비밀번호: 처음 연결한 기기의 앱이 무작위 비밀번호를 만들어 이 스크립트(프로젝트 설정 → 스크립트 속성 SECRET)에 저장한다.
+ *          다른 기기는 그 기기의 ⚙︎에 나오는 QR·연결 링크로 연결한다. 처음부터 다시 하려면 스크립트 속성 SECRET 을 지운다.
  * 코드를 고친 뒤에는 배포 → 배포 관리 → 수정(연필) → 버전: 새 버전 으로 다시 배포해야 반영된다.
  */
-const SECRET = 'CHANGE_ME';
+const secret = () => PropertiesService.getScriptProperties().getProperty('SECRET') || '';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36';
 const DATA_FILE = 'recipe-note-data.json';
 
 function doGet(e) {
   const p = (e && e.parameter) || {};
-  if (p.key !== SECRET) return out({ ok: false, error: 'key' });
+  // 처음 연결: 앱이 만든 비밀번호를 한 번만 저장한다 (이미 있으면 거절)
+  if (p.setup) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      if (secret()) return out({ ok: false, error: 'already' });
+      if (!/^[a-z0-9]{16,64}$/.test(p.setup)) return out({ ok: false, error: 'setup' });
+      PropertiesService.getScriptProperties().setProperty('SECRET', p.setup);
+      return out({ ok: true, pong: true, sync: true });
+    } finally { lock.releaseLock(); }
+  }
+  if (!secret()) return out({ ok: false, error: 'nosetup' });
+  if (p.key !== secret()) return out({ ok: false, error: 'key' });
   if (!p.url) return out({ ok: true, pong: true, sync: true });
   try {
     return out(Object.assign({ ok: true }, grab(p.url)));
@@ -30,7 +44,7 @@ function doGet(e) {
 function doPost(e) {
   let body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return out({ ok: false, error: 'json' }); }
-  if (body.key !== SECRET) return out({ ok: false, error: 'key' });
+  if (!secret() || body.key !== secret()) return out({ ok: false, error: 'key' });
   if (body.action !== 'sync') return out({ ok: false, error: 'action' });
   const lock = LockService.getScriptLock();
   lock.waitLock(20000); // 폰과 PC가 동시에 보내도 하나씩 처리
